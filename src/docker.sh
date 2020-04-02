@@ -235,7 +235,7 @@ docker::configure() {
 docker::import() (
     local -r uri="$1"
     local filename="$2" arch="$3"
-    local layers=() config= image= registry= tag= user= tmpdir=
+    local layers=() config= image= registry= tag= user= tmpdir= timestamp=
 
     common::checkcmd curl grep awk jq parallel tar "${ENROOT_GZIP_PROGRAM}" find mksquashfs zstd
 
@@ -308,17 +308,21 @@ docker::import() (
     zstd -q -d -o config "${ENROOT_CACHE_PATH}/${config}"
     docker::configure "${PWD}/0" config "${arch}"
 
+    if [ -n "${SOURCE_DATE_EPOCH-}" ]; then
+	timestamp="-mkfs-time ${SOURCE_DATE_EPOCH} -all-time ${SOURCE_DATE_EPOCH}"
+    fi
+
     # Create the final squashfs filesystem by overlaying all the layers.
     common::log INFO "Creating squashfs filesystem..." NL
     mkdir rootfs
     MOUNTPOINT="${PWD}/rootfs" \
-    enroot-mksquashovlfs "0:$(seq -s: 1 "${#layers[@]}")" "${filename}" -all-root ${TTY_OFF+-no-progress} -processors "${ENROOT_MAX_PROCESSORS}" ${ENROOT_SQUASH_OPTIONS} >&2
+    enroot-mksquashovlfs "0:$(seq -s: 1 "${#layers[@]}")" "${filename}" ${timestamp} -all-root ${TTY_OFF+-no-progress} -processors "${ENROOT_MAX_PROCESSORS}" ${ENROOT_SQUASH_OPTIONS} >&2
 )
 
 docker::daemon::import() (
     local -r uri="$1"
     local filename="$2" arch="$3"
-    local image= tmpdir=
+    local image= tmpdir= timestamp=
 
     common::checkcmd jq docker mksquashfs tar
 
@@ -364,7 +368,14 @@ docker::daemon::import() (
     docker inspect "${image}" | jq '.[] | with_entries(.key|=ascii_downcase)' > config
     docker::configure rootfs config "${arch}"
 
+    if [ -n "${SOURCE_DATE_EPOCH-}" ]; then
+	timestamp="-mkfs-time ${SOURCE_DATE_EPOCH} -all-time ${SOURCE_DATE_EPOCH}"
+	# FIXME: unsetting SOURCE_DATE_EPOCH otherwise mksquashfs complains that both -all-time and SOURCE_DATE_EPOCH are set.
+	# Maybe we should use ENROOT_SOURCE_DATE_EPOCH instead?
+	unset SOURCE_DATE_EPOCH
+    fi
+
     # Create the final squashfs filesystem.
     common::log INFO "Creating squashfs filesystem..." NL
-    mksquashfs rootfs "${filename}" -all-root ${TTY_OFF+-no-progress} -processors "${ENROOT_MAX_PROCESSORS}" ${ENROOT_SQUASH_OPTIONS} >&2
+    mksquashfs rootfs "${filename}" ${timestamp} -all-root ${TTY_OFF+-no-progress} -processors "${ENROOT_MAX_PROCESSORS}" ${ENROOT_SQUASH_OPTIONS} >&2
 )
